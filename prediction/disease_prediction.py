@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
+
 from skimage.io import imsave
 from tqdm import tqdm
 
@@ -90,7 +90,7 @@ def embeddings(model, data_loader, device):
     targets = []
 
     with torch.no_grad():
-        for index, batch in enumerate(tqdm(data_loader, desc="Test-loop")):
+        for batch in tqdm(data_loader, desc="Test-loop"):
             img, lab = batch["image"].to(device), batch["label"].to(device)
             emb = model(img)
             embeds.append(emb)
@@ -218,7 +218,9 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         max_epochs=args.epochs,
         gpus=args.gpus,
         accelerator="auto",
-        logger=TensorBoardLogger(run_dir, name=run_config, version=cur_version),
+        logger=WandbLogger(
+            project="cxr",
+            name=run_config, version=cur_version),
     )
     trainer.logger._default_hp_metric = False
     trainer.fit(model, data)
@@ -278,21 +280,21 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         index=False,
     )
 
-    # print('EMBEDDINGS')
-    #
-    # model.remove_head()
-    #
-    # embeds_val, targets_val = embeddings(model, data.val_dataloader(), device)
-    # df = pd.DataFrame(data=embeds_val)
-    # df_targets = pd.DataFrame(data=targets_val, columns=cols_names_targets)
-    # df = pd.concat([df, df_targets], axis=1)
-    # df.to_csv(os.path.join(out_dir, 'embeddings.val.version_{}.csv'.format(cur_version)), index=False)
-    #
-    # embeds_test, targets_test = embeddings(model, data.test_dataloader(), device)
-    # df = pd.DataFrame(data=embeds_test)
-    # df_targets = pd.DataFrame(data=targets_test, columns=cols_names_targets)
-    # df = pd.concat([df, df_targets], axis=1)
-    # df.to_csv(os.path.join(out_dir, 'embeddings.test.version_{}.csv'.format(cur_version)), index=False)
+    print('EMBEDDINGS')
+    
+    model.remove_head()
+    
+    embeds_val, targets_val = embeddings(model, data.val_dataloader(), device)
+    df = pd.DataFrame(data=embeds_val)
+    df_targets = pd.DataFrame(data=targets_val, columns=cols_names_targets)
+    df = pd.concat([df, df_targets], axis=1)
+    df.to_csv(os.path.join(out_dir, 'embeddings.val.version_{}.csv'.format(cur_version)), index=False)
+    
+    embeds_test, targets_test = embeddings(model, data.test_dataloader(), device)
+    df = pd.DataFrame(data=embeds_test)
+    df_targets = pd.DataFrame(data=targets_test, columns=cols_names_targets)
+    df = pd.concat([df, df_targets], axis=1)
+    df.to_csv(os.path.join(out_dir, 'embeddings.test.version_{}.csv'.format(cur_version)), index=False)
 
     # delete the model parameters
 
