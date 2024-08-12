@@ -39,7 +39,15 @@ hp_default_value = {
     "save_model": False,
     "num_workers": 2,
     "num_classes": 1,
+    "embedding_size": None,
+    "csv_file_img": None,
 }
+
+
+def nullable_string(val):
+    if not val:
+        return None
+    return str(val)
 
 
 def get_cur_version(dir_path):
@@ -119,6 +127,9 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
     # if the hp value is not default
     args_dict = vars(args)
     for each_hp in hp_default_value.keys():
+        if "csv_file_img" in each_hp:
+            continue
+
         if hp_default_value[each_hp] != args_dict[each_hp]:
             run_config += f"-{each_hp}{args_dict[each_hp]}"
 
@@ -127,7 +138,7 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
 
     # Create output directory
     # out_name = str(model.model_name)
-    run_dir = "/work3/ninwe/run/cause_bias/"
+    run_dir = "/work1/s184017/run/drain_analysis/"
     out_dir = run_dir + run_config
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -188,6 +199,7 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         pretrained=args.pretrained,
         model_scale=args.model_scale,
         loss_func_type="BCE",
+        embedding_size=args.embedding_size,
     )
 
     temp_dir = os.path.join(out_dir, "temp_version_{}".format(cur_version))
@@ -215,12 +227,13 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         # callbacks=[checkpoint_callback],
         callbacks=[EarlyStopping(monitor="val_loss", mode="min", patience=3)],
         log_every_n_steps=1,
-        max_epochs=args.epochs,
+        max_epochs=int(args.epochs),
         gpus=args.gpus,
         accelerator="auto",
         logger=WandbLogger(
-            project="cxr",
-            name=run_config, version=cur_version),
+            project="cxr", name=run_config, version=cur_version, save_dir=run_dir
+        ),
+        default_root_dir=out_dir,
     )
     trainer.logger._default_hp_metric = False
     trainer.fit(model, data)
@@ -232,9 +245,20 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         pretrained=args.pretrained,
         model_scale=args.model_scale,
         loss_func_type="BCE",
+        embedding_size=args.embedding_size,
     )
 
     model.to(device)
+
+    # Save `model.fc.weight` and `model.fc.bias`
+    with torch.no_grad():
+        weight = model.model.fc.weight.data.cpu().numpy()
+        bias = model.model.fc.bias.data.cpu().numpy()
+
+        np.save(os.path.join(out_dir, "weight.npy"), weight)
+        np.save(os.path.join(out_dir, "bias.npy"), bias)
+
+    data.train_set.do_augment = False
 
     cols_names_classes = ["class_" + str(i) for i in range(0, args.num_classes)]
     cols_names_logits = ["logit_" + str(i) for i in range(0, args.num_classes)]
@@ -280,27 +304,44 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         index=False,
     )
 
-    print('EMBEDDINGS')
-    
+    print("EMBEDDINGS")
     model.remove_head()
-    
+
+    print("Train embeddings")
+    embeds_train, targets_train = embeddings(
+        model, data.train_dataloader_nonshuffle(), device
+    )
+    df = pd.DataFrame(data=embeds_train)
+    df_targets = pd.DataFrame(data=targets_train, columns=cols_names_targets)
+    df = pd.concat([df, df_targets], axis=1)
+    df.to_csv(
+        os.path.join(out_dir, "embeddings.train.version_{}.csv".format(cur_version)),
+        index=False,
+    )
+
+    print("Val embeddings")
     embeds_val, targets_val = embeddings(model, data.val_dataloader(), device)
     df = pd.DataFrame(data=embeds_val)
     df_targets = pd.DataFrame(data=targets_val, columns=cols_names_targets)
     df = pd.concat([df, df_targets], axis=1)
-    df.to_csv(os.path.join(out_dir, 'embeddings.val.version_{}.csv'.format(cur_version)), index=False)
-    
+    df.to_csv(
+        os.path.join(out_dir, "embeddings.val.version_{}.csv".format(cur_version)),
+        index=False,
+    )
+
+    print("Test embeddings")
     embeds_test, targets_test = embeddings(model, data.test_dataloader(), device)
     df = pd.DataFrame(data=embeds_test)
     df_targets = pd.DataFrame(data=targets_test, columns=cols_names_targets)
     df = pd.concat([df, df_targets], axis=1)
-    df.to_csv(os.path.join(out_dir, 'embeddings.test.version_{}.csv'.format(cur_version)), index=False)
-
-    # delete the model parameters
+    df.to_csv(
+        os.path.join(out_dir, "embeddings.test.version_{}.csv".format(cur_version)),
+        index=False,
+    )
 
     if args.save_model == False:
         model_para_dir = os.path.join(out_dir, "version_{}".format(cur_version))
-        shutil.rmtree(model_para_dir)
+        # shutil.rmtree(model_para_dir)
 
 
 if __name__ == "__main__":
@@ -341,7 +382,9 @@ if __name__ == "__main__":
     # hps that set as defaults
     parser.add_argument("--lr", default=1e-6, help="learning rate, default=1e-6")
     parser.add_argument("--bs", default=64, help="batch size, default=64")
-    parser.add_argument("--epochs", default=20, help="number of epochs, default=20")
+    parser.add_argument(
+        "--epochs", default=20, help="number of epochs, default=20", type=int
+    )
     parser.add_argument("--model", default="resnet", help="model, default='ResNet'")
     parser.add_argument(
         "--model_scale", default="50", help="model scale, default=50", type=str
@@ -384,6 +427,12 @@ if __name__ == "__main__":
         type=lambda x: (str(x).lower() == "true"),
     )
     parser.add_argument("--num_workers", default=2, help="number of workers")
+    parser.add_argument(
+        "--embedding_size", default=None, help="Embedding size", type=int
+    )
+    parser.add_argument(
+        "--csv_file_img", default=None, help="Labels", type=nullable_string
+    )
 
     args = parser.parse_args()
 
@@ -402,12 +451,13 @@ if __name__ == "__main__":
     elif args.image_size == 1024:
         args.img_data_dir = args.img_dir + "{}/images/".format(args.dataset)
 
-    if args.dataset == "NIH":
-        args.csv_file_img = "../datafiles/" + "Data_Entry_2017_v2020_clean_split.csv"
-    elif args.dataset == "chexpert":
-        args.csv_file_img = "../datafiles/" + "chexpert.sample.allrace.csv"
-    else:
-        raise Exception("Not implemented.")
+    if args.csv_file_img is None:
+        if args.dataset == "NIH":
+            args.csv_file_img = "../datafiles/Data_Entry_2017_v2020_clean_split.csv"
+        elif args.dataset == "chexpert":
+            args.csv_file_img = "../datafiles/chexpert.sample.allrace.csv"
+        else:
+            raise Exception("Not implemented.")
 
     print("hyper-parameters:")
     print(args)

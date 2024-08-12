@@ -4,17 +4,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from torchmetrics import AUROC, Accuracy
+import torchmetrics.functional as metrics
 from torchmetrics.classification import MultilabelAUROC
 from torchvision import models
 
 
 class ResNet(pl.LightningModule):
-    def __init__(self, num_classes, lr, pretrained, model_scale, loss_func_type="BCE"):
+    def __init__(self, num_classes, lr, pretrained, model_scale, loss_func_type="BCE", embedding_size=None):
         super().__init__()
         self.model_name = "resnet"
         self.num_classes = num_classes
         self.pretrained = pretrained
         self.model_scale = model_scale
+        self.embedding_size = embedding_size
         self.loss_func_type = loss_func_type
         if self.model_scale == "18":
             self.model = models.resnet18(pretrained=self.pretrained)
@@ -27,7 +29,10 @@ class ResNet(pl.LightningModule):
 
         # freeze_model(self.model)
         num_features = self.model.fc.in_features
-        self.model.fc = nn.Linear(num_features, self.num_classes)
+        self.model.fc = nn.Linear(num_features, self.embedding_size or self.num_classes)
+
+        if self.embedding_size is not None:
+            self.fc = nn.Linear(self.embedding_size, self.num_classes)
 
         self.lr = lr
         if self.loss_func_type == "BCE":
@@ -45,9 +50,7 @@ class ResNet(pl.LightningModule):
 
         if self.num_classes == 1:
             self.accu_func = Accuracy(task="binary", num_labels=num_classes)
-            self.auroc_func = AUROC(
-                task="binary", num_labels=num_classes, average="macro", thresholds=None
-            )
+            self.auroc_func = None
         elif self.num_classes > 1:
             self.accu_func = Accuracy(task="multilabel", num_labels=num_classes)
             self.auroc_func = MultilabelAUROC(
@@ -55,12 +58,21 @@ class ResNet(pl.LightningModule):
             )
 
     def remove_head(self):
-        num_features = self.model.fc.in_features
-        id_layer = nn.Identity(num_features)
-        self.model.fc = id_layer
+        if self.embedding_size is not None:
+            id_layer = nn.Identity(self.embedding_size)
+            self.fc = id_layer
+        else:
+            num_features = self.model.fc.in_features
+            id_layer = nn.Identity(num_features)
+            self.model.fc = id_layer
 
     def forward(self, x):
-        return self.model.forward(x)
+        x = self.model.forward(x)
+
+        if self.embedding_size:
+            x = self.fc(x)
+
+        return x
 
     def configure_optimizers(self):
         params_to_update = []
@@ -80,7 +92,12 @@ class ResNet(pl.LightningModule):
         loss = self.loss_func(prob, lab)
 
         multi_accu = self.accu_func(prob, lab)
-        multi_auroc = self.auroc_func(prob, lab.long())
+
+
+        multi_auroc = metrics.auroc(
+                prob, lab.long(),
+                task="binary", average="macro"
+            )
         # print(prob.shape,lab.shape,lab.long().shape)
         # print('multi_auroc:{:.4f}'.format(multi_auroc))
         return loss, multi_accu, multi_auroc

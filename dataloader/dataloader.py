@@ -229,6 +229,7 @@ class NIHDataResampleModule(pl.LightningDataModule):
         ) = self.get_prevalence_patientwise()
 
         df_train, df_valid, df_test = self.dataset_sampling()
+
         self.df_train = df_train
         self.df_valid = df_valid
         self.df_test = df_test
@@ -468,10 +469,15 @@ class NIHDataResampleModule(pl.LightningDataModule):
                 else:
                     test_set = pd.concat([test_set, this_test], axis=0)
 
+        # Extend `df_test`` with csv `../datafiles/nih_with_drain_labels.csv`
+        df_test_drain = pd.read_csv("../datafiles/nih_with_drain_labels.csv", header=0)
+        test_set = pd.concat([test_set, df_test_drain], axis=0)
+
         train_set.reset_index(inplace=True, drop=True)
         val_set.reset_index(inplace=True, drop=True)
         test_set.reset_index(inplace=True, drop=True)
 
+    
         # save splits
         train_set.to_csv(
             os.path.join(self.outdir, "train.version_{}.csv".format(self.version_no)),
@@ -485,6 +491,7 @@ class NIHDataResampleModule(pl.LightningDataModule):
             os.path.join(self.outdir, "test.version_{}.csv".format(self.version_no)),
             index=False,
         )
+        
 
         return train_set, val_set, test_set
 
@@ -779,6 +786,7 @@ class CheXpertDataResampleModule(pl.LightningDataModule):
         ) = self.get_prevalence_patientwise()
 
         df_train, df_valid, df_test = self.dataset_sampling()
+
         self.df_train = df_train
         self.df_valid = df_valid
         self.df_test = df_test
@@ -1018,6 +1026,10 @@ class CheXpertDataResampleModule(pl.LightningDataModule):
                     test_set = this_test
                 else:
                     test_set = pd.concat([test_set, this_test], axis=0)
+
+        # Extend `df_test`` with csv `../datafiles/nih_with_drain_labels.csv`
+        df_test_drain = pd.read_csv("../datafiles/chexpert_with_drain_labels.csv", header=0)
+        test_set = pd.concat([test_set, df_test_drain], axis=0)
 
         train_set.reset_index(inplace=True, drop=True)
         val_set.reset_index(inplace=True, drop=True)
