@@ -137,9 +137,7 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
     print("run_config:{}".format(run_config))
 
     # Create output directory
-    # out_name = str(model.model_name)
-    run_dir = "/work1/s184017/run/drain_analysis/"
-    out_dir = run_dir + run_config
+    out_dir = args.run_dir + run_config
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
@@ -231,7 +229,7 @@ def main(args, female_perc_in_training=None, random_state=None, chose_disease_st
         gpus=args.gpus,
         accelerator="auto",
         logger=WandbLogger(
-            project="cxr", name=run_config, version=cur_version, save_dir=run_dir
+            project="cxr", name=run_config, version=cur_version, save_dir=args.run_dir
         ),
         default_root_dir=out_dir,
     )
@@ -433,7 +431,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--csv_file_img", default=None, help="Labels", type=nullable_string
     )
-
+    parser.add_argument(
+        "--run_dir", default=None, help="Directory containing the results of different runs", type=nullable_string
+    )
     args = parser.parse_args()
 
     # other hps
